@@ -5,6 +5,7 @@ from collections import namedtuple
 from triton._C.libtriton import native_specialize_impl
 from triton.runtime.jit import MockTensor, JITCallable
 from triton._utils import canonicalize_dtype
+from triton.backends.compiler import BaseBackend
 from triton.backends.nvidia.compiler import CUDABackend
 from triton.backends.amd.compiler import HIPBackend
 from triton.language import constexpr
@@ -37,6 +38,14 @@ class MockInt(int):
 
     def __new__(cls, value):
         return super().__new__(cls, value)
+
+
+def reference_tensordesc_key(backend, arg, specialize_value, align):
+    if not specialize_value:
+        return None
+    if getattr(backend, "supports_native_tensordesc_specialization", True):
+        return None
+    return backend.get_tensordesc_specialization(arg, align=align)
 
 
 def reference_specialize_impl(backend, arg, is_const, specialize_value, align):
@@ -74,7 +83,8 @@ def reference_specialize_impl(backend, arg, is_const, specialize_value, align):
     elif isinstance(arg, TensorDescriptor):
         assert hasattr(arg.base, "data_ptr")
         inner = canonicalize_dtype(arg.base.dtype)
-        return (f"tensordesc<{inner}{list(arg.block_shape)}>", None)
+        key = reference_tensordesc_key(backend, arg, specialize_value, align)
+        return (f"tensordesc<{inner}{list(arg.block_shape)}>", key)
     elif isinstance(arg, GluonTensorDescriptor):
         assert hasattr(arg.base, "data_ptr")
         inner = canonicalize_dtype(arg.base.dtype)
@@ -82,7 +92,8 @@ def reference_specialize_impl(backend, arg, is_const, specialize_value, align):
         type_name = "tensordesc_im2col" if is_im2col else "tensordesc"
         # For im2col mode, include the original tensor rank in the signature
         rank_suffix = f",input_rank={len(arg.shape)}" if is_im2col else ""
-        return (f"{type_name}<{inner}{list(arg.block_shape)}{rank_suffix},{arg.layout!r}>", None)
+        key = reference_tensordesc_key(backend, arg, specialize_value, align)
+        return (f"{type_name}<{inner}{list(arg.block_shape)}{rank_suffix},{arg.layout!r}>", key)
     else:
         raise TypeError("Unsupported type: %s" % type(arg))
 
@@ -187,3 +198,80 @@ def test_specialize_impl(input_generator, backend, is_const, specialize_value, a
         result = native_specialize_impl(backend, arg, is_const, specialize_value, align)
         expected = reference_specialize_impl(backend, arg, is_const, specialize_value, align)
         assert result == expected
+
+
+class TensordescSpecializingBackend(CUDABackend):
+    """A backend that supplies its own descriptor specialization key."""
+    supports_native_tensordesc_specialization = False
+
+    @staticmethod
+    def get_tensordesc_specialization(arg, **kwargs):
+        key = ""
+        if all(dim % block == 0 for dim, block in zip(arg.shape, arg.block_shape)):
+            key += "B"
+        if kwargs.get("align", False):
+            key += "A"
+        return key
+
+
+@pytest.mark.parametrize("input_generator", [
+    tensordescriptors_to_specialize,
+    gluon_tensordescriptors_to_specialize,
+])
+@pytest.mark.parametrize("specialize_value", [True, False])
+@pytest.mark.parametrize("align", [True, False])
+def test_specialize_tensordesc_backend_key(input_generator, specialize_value, align):
+    """The backend's key must reach the specialization tuple. do_not_specialize suppresses the key
+    entirely; do_not_specialize_on_alignment only withholds align from the backend."""
+    backend = TensordescSpecializingBackend
+    saw_key = False
+    for arg in input_generator():
+        result = native_specialize_impl(backend, arg, False, specialize_value, align)
+        expected = reference_specialize_impl(backend, arg, False, specialize_value, align)
+        assert result == expected
+        if specialize_value:
+            assert "A" in result[1] if align else "A" not in result[1]
+            saw_key = saw_key or bool(result[1])
+        else:
+            assert result[1] is None
+    if specialize_value:
+        assert saw_key, "expected at least one descriptor to produce a non-empty key"
+
+
+@pytest.mark.parametrize("input_generator", [
+    tensordescriptors_to_specialize,
+    gluon_tensordescriptors_to_specialize,
+])
+def test_specialize_tensordesc_native_flag_skips_backend(input_generator):
+    """With the flag left set, the backend's descriptor hook must not be called."""
+
+    class Exploding(CUDABackend):
+
+        @staticmethod
+        def get_tensordesc_specialization(arg, **kwargs):
+            raise AssertionError("must not be called while the native flag is set")
+
+    assert Exploding.supports_native_tensordesc_specialization
+    for arg in input_generator():
+        assert native_specialize_impl(Exploding, arg, False, True, True)[1] is None
+
+
+def test_specialize_tensordesc_base_defaults():
+    """A backend that opts out without overriding the method gets the base implementation."""
+
+    class InheritedDefault(CUDABackend):
+        supports_native_tensordesc_specialization = False
+
+    assert BaseBackend.supports_native_tensordesc_specialization
+    for arg in tensordescriptors_to_specialize():
+        assert native_specialize_impl(InheritedDefault, arg, False, True, True)[1] == ""
+
+
+def test_specialize_tensordesc_missing_flag_stays_native():
+    """Without the flag the native path is kept, so the key is unchanged."""
+
+    class NoFlag:
+        pass
+
+    for arg in tensordescriptors_to_specialize():
+        assert native_specialize_impl(NoFlag, arg, False, True, True)[1] is None
