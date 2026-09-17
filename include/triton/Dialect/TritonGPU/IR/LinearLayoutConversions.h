@@ -69,6 +69,10 @@ LinearLayout toLinearLayoutIgnoringPadding(MemDescType type);
 LinearLayout toLinearLayoutIgnoringPadding(ArrayRef<int64_t> shape,
                                            Attribute encoding);
 
+// The order of a layout's dimensions, fastest changing first, taken from which
+// dimension each "offset" basis moves.
+SmallVector<unsigned> getOrderFromLayout(const LinearLayout &layout);
+
 // Convert the shared encoding of a tensor with `nvmma_shared` layout to a
 // LinearLayout that maps from a linear shared memory offset to tensor index.
 //
