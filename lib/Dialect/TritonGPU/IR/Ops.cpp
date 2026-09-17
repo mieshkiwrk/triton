@@ -598,10 +598,10 @@ LogicalResult MemDescReshapeOp::verify() {
   return OpTrait::impl::verifyEquivalentMemDescType(expectedTy, dstType);
 }
 
-static LogicalResult inferMemDescReshapeOpEncoding(ArrayRef<int64_t> srcShape,
-                                                   Attribute srcEnc,
-                                                   ArrayRef<int64_t> dstShape,
-                                                   Attribute &dstEnc) {
+static LogicalResult
+inferMemDescReshapeOpEncoding(ArrayRef<int64_t> srcShape, Attribute srcEnc,
+                              ArrayRef<int64_t> dstShape, Attribute &dstEnc,
+                              std::optional<Location> loc) {
   auto *ctx = srcEnc.getContext();
   // TODO Delete this once SharedLinearEncodingAttr is more widely supported.
   if (auto mmaEncoding = dyn_cast<NVMMASharedEncodingAttr>(srcEnc)) {
@@ -642,6 +642,13 @@ static LogicalResult inferMemDescReshapeOpEncoding(ArrayRef<int64_t> srcShape,
 
   // Generic LL case
   auto sharedEnc = cast<SharedEncodingTrait>(srcEnc);
+  // Reshaping across the tiling of an encoding needs to know which storage unit
+  // holds each element, which an encoding that only describes its footprint
+  // cannot answer.
+  if (!sharedEnc.hasElementPlacement())
+    return emitOptionalError(loc, "cannot infer the reshaped encoding of a "
+                                  "layout that does not describe element "
+                                  "placement");
   auto srcLL = toLinearLayout(srcShape, srcEnc);
   auto dstLL = reshapeLayout(ctx, srcLL, dstShape);
   dstEnc = SharedLinearEncodingAttr::get(ctx, std::move(dstLL),
@@ -659,7 +666,7 @@ LogicalResult MemDescReshapeOp::inferReturnTypes(
   Attribute dstEncoding;
   if (Attribute srcEnc = srcTy.getEncoding()) {
     if (failed(inferMemDescReshapeOpEncoding(srcTy.getShape(), srcEnc, dstShape,
-                                             dstEncoding)))
+                                             dstEncoding, loc)))
       return failure();
   }
 
@@ -738,9 +745,9 @@ LogicalResult MemDescReinterpretOp::verify() {
               srcTy.getMemorySpace()) &&
           "expected shared or tensor memory"));
 
-  auto srcAllocation = toLinearLayoutIgnoringPadding(
+  auto srcAllocation = getAllocationLayout(
       dropPipeliningDim(srcTy.getAllocShape(), srcEnc), srcEnc);
-  auto dstAllocation = toLinearLayoutIgnoringPadding(
+  auto dstAllocation = getAllocationLayout(
       dropPipeliningDim(dstTy.getAllocShape(), dstEnc), dstEnc);
   auto srcShape = dropPipeliningDim(srcTy.getShape(), srcEnc);
   auto blockDim = StringAttr::get(getContext(), "block");
@@ -1287,7 +1294,7 @@ LogicalResult MemDescSubsliceOp::verify() {
                        "rank tensors is not supported yet");
     }
   }
-  LinearLayout ll = triton::gpu::toLinearLayoutIgnoringPadding(srcTy);
+  LinearLayout ll = triton::gpu::getAllocationLayout(srcTy);
 
   auto llInv = ll.pseudoinvert();
   for (auto dim : splitDims) {
