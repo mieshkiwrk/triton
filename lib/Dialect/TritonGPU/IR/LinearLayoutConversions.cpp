@@ -1365,6 +1365,25 @@ LinearLayout toLinearLayoutIgnoringPadding(MemDescType type) {
                                               : toLinearLayout(type);
 }
 
+LinearLayout getAllocationLayout(ArrayRef<int64_t> shape, Attribute encoding) {
+  // Tensor-memory encodings are not shared encodings, but the memdesc verifiers
+  // and the buffer-region analysis reason about both. Their placement map is
+  // their storage layout, so fall back to it.
+  if (auto shared = dyn_cast<SharedEncodingTrait>(encoding))
+    return shared.getAllocationLayout(shape);
+  return toLinearLayoutIgnoringPadding(shape, encoding);
+}
+
+LinearLayout getAllocationLayout(MemDescType type) {
+  auto encoding = type.getEncoding();
+  // Tensor memory keeps the existing behaviour, which instantiates the view
+  // rather than the allocation.
+  if (!isa<SharedEncodingTrait>(encoding))
+    return toLinearLayoutIgnoringPadding(type);
+  return getAllocationLayout(dropPipeliningDim(type.getAllocShape(), encoding),
+                             encoding);
+}
+
 LinearLayout getLayoutWithinBlock(const LinearLayout &layout) {
   assert(!layout.getInDimNames().empty());
   MLIRContext *ctx = layout.getInDimNames().begin()->getContext();
