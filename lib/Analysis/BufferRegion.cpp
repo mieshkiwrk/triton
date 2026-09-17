@@ -133,7 +133,7 @@ MemDescFootprint getMemDescAddresses(
           addresses.translated(storageBase);
     return footprint;
   }
-  triton::LinearLayout layout = ttg::toLinearLayoutIgnoringPadding(ty);
+  triton::LinearLayout layout = ttg::getAllocationLayout(ty);
   triton::LinearLayout inverse = layout.pseudoinvert();
   MLIRContext *ctx = ty.getContext();
   SmallVector<StringAttr> dims = triton::standardOutDimNames(ctx, ty.getRank());
@@ -265,7 +265,7 @@ getMemDescSubsliceUnpaddedOffsets(ttg::MemDescSubsliceOp op) {
   Attribute encoding = srcTy.getEncoding();
   auto layoutOffsets = ttg::dropPipeliningDim(offsets, encoding);
   auto layoutRank = layoutOffsets.size();
-  mlir::triton::LinearLayout layout = ttg::toLinearLayoutIgnoringPadding(srcTy);
+  mlir::triton::LinearLayout layout = ttg::getAllocationLayout(srcTy);
 
   MLIRContext *ctx = op->getContext();
   SmallVector<StringAttr> dimNames =

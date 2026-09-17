@@ -303,6 +303,11 @@ mlir::triton::getDefiningOpAndDistance(scf::ForOp forOp, Value value) {
 
 int mlir::triton::getCopyVecBytes(RankedTensorType registerTy,
                                   ttg::SharedEncodingTrait sharedEnc) {
+  // Without element placement there is no telling which elements end up
+  // consecutive in shared memory, so report none and let the caller keep the
+  // synchronous copy.
+  if (!sharedEnc.hasElementPlacement())
+    return 0;
   auto shape = registerTy.getShape();
   auto regLayout = triton::gpu::toLinearLayout(shape, registerTy.getEncoding());
   // FIXME: Here we should pass a MemDescType instead of a SharedEncodingTrait!!
