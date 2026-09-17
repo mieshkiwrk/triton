@@ -454,6 +454,14 @@ TEST_F(FootprintOnlySharedEncodingTest, ReshapeInferenceReportsIt) {
   EXPECT_THAT(diag, testing::HasSubstr("does not describe element placement"));
 }
 
+TEST_F(FootprintOnlySharedEncodingTest, DimensionOrderComesFromTheFootprint) {
+  // The order of the dimensions in storage follows from the allocation layout,
+  // so core can order a buffer it cannot address element by element.
+  SmallVector<int64_t> shape = {32, 64};
+  EXPECT_EQ(getOrder(cast<SharedEncodingTrait>(encoding()), shape),
+            SmallVector<unsigned>({1, 0}));
+}
+
 TEST_F(FootprintOnlySharedEncodingTest, EquivalenceIsAttributeEquality) {
   // Two footprint-only encodings can cover the same storage while placing
   // elements differently, so they are compared as attributes rather than

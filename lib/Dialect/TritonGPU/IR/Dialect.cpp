@@ -300,34 +300,9 @@ SmallVector<unsigned> getRepOrder(RankedTensorType type) {
   return {};
 }
 
-// Legacy impl for now
-// This one's not terribly bad as we don't broadcast ShareEncodings
 SmallVector<unsigned> getOrder(SharedEncodingTrait layout,
                                ArrayRef<int64_t> shape) {
-  if (auto swizzledLayout = dyn_cast<SwizzledSharedEncodingAttr>(layout)) {
-    return llvm::to_vector(swizzledLayout.getOrder());
-  }
-  if (auto paddedEnc = dyn_cast<PaddedSharedEncodingAttr>(layout)) {
-    return paddedEnc.getOrder();
-  }
-  if (auto linearEnc = dyn_cast<SharedLinearEncodingAttr>(layout)) {
-    return linearEnc.getOrder();
-  }
-  if (auto sharedLayout = dyn_cast<NVMMASharedEncodingAttr>(layout)) {
-    if (shape.size() == 1) {
-      return {0};
-    }
-    return getMatrixOrder(shape.size(), !sharedLayout.getTransposed());
-  }
-  if (auto sharedLayout = dyn_cast<AMDRotatingSharedEncodingAttr>(layout)) {
-    return llvm::to_vector(sharedLayout.getOrder());
-  }
-  if (auto partitionedLayout =
-          dyn_cast<PartitionedSharedEncodingAttr>(layout)) {
-    return getOrder(partitionedLayout.getPartitionLayout(), shape);
-  }
-  llvm::report_fatal_error("Unimplemented usage of getOrder for MemDescType");
-  return {};
+  return layout.getDimOrder(shape);
 }
 
 SmallVector<unsigned> getOrder(DistributedEncodingTrait layout,
@@ -616,6 +591,18 @@ static SmallVector<unsigned> orderPerDimImpl(const LinearLayout &ll,
     order.insert(i);
   }
   return order.takeVector();
+}
+
+SmallVector<unsigned> getOrderFromLayout(const LinearLayout &layout) {
+  MLIRContext *ctx = layout.getInDimNames().begin()->getContext();
+  unsigned rank = layout.getNumOutDims();
+  // The order names dimensions by position, so the layout has to list them in
+  // the standard order for the result to mean anything to a caller.
+  assert(llvm::equal(layout.getOutDimNames(), standardOutDimNames(ctx, rank)) &&
+         "expected the standard output dimensions, in order");
+  SmallVector<unsigned> defaultOrder(rank);
+  std::iota(defaultOrder.rbegin(), defaultOrder.rend(), 0);
+  return orderPerDimImpl(layout, StringAttr::get(ctx, "offset"), defaultOrder);
 }
 
 static LogicalResult

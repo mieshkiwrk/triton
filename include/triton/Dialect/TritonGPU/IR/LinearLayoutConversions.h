@@ -78,6 +78,10 @@ LinearLayout toLinearLayoutIgnoringPadding(ArrayRef<int64_t> shape,
 // the storage layout of the allocation it views, and keeps the previous
 // behaviour for tensor memory, which is not a shared encoding.
 LinearLayout getAllocationLayout(MemDescType type);
+
+// The order of a layout's dimensions, fastest changing first, taken from which
+// dimension each "offset" basis moves.
+SmallVector<unsigned> getOrderFromLayout(const LinearLayout &layout);
 LinearLayout getAllocationLayout(ArrayRef<int64_t> shape, Attribute encoding);
 
 // Convert the shared encoding of a tensor with `nvmma_shared` layout to a

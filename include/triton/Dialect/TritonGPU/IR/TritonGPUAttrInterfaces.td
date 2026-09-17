@@ -67,6 +67,16 @@ def SharedEncodingTrait : AttrInterface<"SharedEncodingTrait"> {
                     (ins "ArrayRef<int64_t>":$shape), [{}], [{
       return toLinearLayoutIgnoringPadding(shape, $_attr);
     }]>,
+    InterfaceMethod<[{
+      Return the order of the dimensions in storage, fastest changing first. The
+      default derives it from the encoding's allocation layout, so an encoding
+      only overrides it to state an order its layout does not show.
+    }],
+                    "SmallVector<unsigned>", "getDimOrder",
+                    (ins "ArrayRef<int64_t>":$shape), [{}], [{
+      return getOrderFromLayout(
+          ::mlir::triton::gpu::getAllocationLayout(shape, $_attr));
+    }]>,
   ];
 }
 def DeclareSharedEncodingMethods : DeclareAttrInterfaceMethods<
