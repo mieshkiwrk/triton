@@ -37,6 +37,15 @@ def SharedEncodingTrait : AttrInterface<"SharedEncodingTrait"> {
                     "LinearLayout",
                     "toLinearLayout",
                     (ins "ArrayRef<int64_t>":$shape)>,
+    InterfaceMethod<[{
+      Return the order of the dimensions in storage, fastest changing first. The
+      default reads it off the encoding's own layout, so an encoding only
+      overrides it to state an order that layout does not show.
+    }],
+                    "SmallVector<unsigned>", "getDimOrder",
+                    (ins "ArrayRef<int64_t>":$shape), [{}], [{
+      return getOrderFromLayout(toLinearLayoutIgnoringPadding(shape, $_attr));
+    }]>,
   ];
 }
 def DeclareSharedEncodingMethods : DeclareAttrInterfaceMethods<
