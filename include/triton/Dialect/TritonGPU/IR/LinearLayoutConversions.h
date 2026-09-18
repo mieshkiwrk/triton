@@ -69,6 +69,21 @@ LinearLayout toLinearLayoutIgnoringPadding(MemDescType type);
 LinearLayout toLinearLayoutIgnoringPadding(ArrayRef<int64_t> shape,
                                            Attribute encoding);
 
+// Returns the storage an encoding occupies, as described by
+// SharedEncodingTrait::getAllocationLayout. Use this for allocation sizes,
+// buffer footprints and aliasing, and toLinearLayout when an element's own
+// address is needed.
+//
+// The MemDescType overload passes the allocation shape, so that a subview keeps
+// the storage layout of the allocation it views, and keeps the previous
+// behaviour for tensor memory, which is not a shared encoding.
+LinearLayout getAllocationLayout(MemDescType type);
+
+// The order of a layout's dimensions, fastest changing first, taken from which
+// dimension each "offset" basis moves.
+SmallVector<unsigned> getOrderFromLayout(const LinearLayout &layout);
+LinearLayout getAllocationLayout(ArrayRef<int64_t> shape, Attribute encoding);
+
 // Convert the shared encoding of a tensor with `nvmma_shared` layout to a
 // LinearLayout that maps from a linear shared memory offset to tensor index.
 //

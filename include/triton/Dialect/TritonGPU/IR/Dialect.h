@@ -330,7 +330,9 @@ ArrayRef<T> dropPipeliningDim(ArrayRef<T> shape, Attribute layout) {
 }
 
 // Returns the number of elements per CTA in the allocation's linear address
-// space. This does not include padding introduced by padded shared layouts.
+// space, derived from the encoding's allocation layout (see
+// SharedEncodingTrait::getAllocationLayout). This does not include padding
+// introduced by padded shared layouts.
 // Leading pipelining dimensions count full allocation stages, including any
 // gaps between visible subslices of consecutive stages.
 // If allocShape is provided, shape may describe a subslice of that allocation.

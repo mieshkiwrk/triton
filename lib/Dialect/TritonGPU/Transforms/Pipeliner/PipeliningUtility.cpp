@@ -303,13 +303,23 @@ mlir::triton::getDefiningOpAndDistance(scf::ForOp forOp, Value value) {
 
 int mlir::triton::getCopyVecBytes(RankedTensorType registerTy,
                                   ttg::SharedEncodingTrait sharedEnc) {
+  // Without element placement there is no telling which elements end up
+  // consecutive in shared memory, so report none and let the caller keep the
+  // synchronous copy.
+  if (!sharedEnc.hasElementPlacement())
+    return 0;
   auto shape = registerTy.getShape();
   auto regLayout = triton::gpu::toLinearLayout(shape, registerTy.getEncoding());
   // FIXME: Here we should pass a MemDescType instead of a SharedEncodingTrait!!
   // This is currently broken for memdesc_subslice!
-  auto sharedLayout = triton::gpu::toLinearLayout(shape, sharedEnc);
+  auto sharedLayout =
+      triton::gpu::toLinearLayoutIgnoringPadding(shape, sharedEnc);
   auto regToSharedLayout = regLayout.invertAndCompose(sharedLayout);
-  const int vecElems = regToSharedLayout.getNumConsecutiveInOut();
+  int vecElems = regToSharedLayout.getNumConsecutiveInOut();
+  // Padding is composed on top of that layout, so consecutive elements cannot
+  // reach past the first padding they hit.
+  if (triton::gpu::isPaddedEncoding(sharedEnc))
+    vecElems = std::min<int>(vecElems, triton::gpu::getMinInterval(sharedEnc));
   return vecElems * registerTy.getElementTypeBitWidth() / 8;
 }
 

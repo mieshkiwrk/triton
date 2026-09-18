@@ -29,6 +29,13 @@ def SharedEncodingTrait : AttrInterface<"SharedEncodingTrait"> {
 
   let description = [{
     Common trait describing shared memory.
+
+    Two questions are asked separately, because only one of them needs to know
+    which storage unit holds a given element: `toLinearLayout` answers where an
+    element sits, and `getAllocationLayout` answers which storage a buffer
+    occupies. Placement determines the footprint, so the default answers both
+    with one map; a padded encoding is the in-tree case where it does not, since
+    its placement is a linear component composed with a padding rule.
   }];
   let methods = [
     InterfaceMethod<"Return the default alignment for the layout.",
@@ -37,6 +44,39 @@ def SharedEncodingTrait : AttrInterface<"SharedEncodingTrait"> {
                     "LinearLayout",
                     "toLinearLayout",
                     (ins "ArrayRef<int64_t>":$shape)>,
+    InterfaceMethod<[{
+      Return whether this encoding places elements at all. Padded encodings do,
+      through `paddedLinearLayout` rather than `toLinearLayout`, and return true;
+      false means placement is a property of the hardware that accesses the
+      buffer, and callers that can only proceed with it report a diagnostic.
+    }],
+                    "bool", "hasElementPlacement", (ins), [{}], [{
+      return true;
+    }]>,
+    InterfaceMethod<[{
+      Return the storage this encoding occupies, mapping storage units to the
+      logical indices held there, before any padding composed on top of it.
+
+      Allocation sizing and subslice arithmetic read this map, so its storage side
+      has to cover the allocation and every subslice the encoding supports,
+      including CTA and partition replication: `getAllocationElems` counts every
+      basis of it, so storage that no element occupies is part of the allocation
+      and is not handed to another buffer.
+    }],
+                    "LinearLayout", "getAllocationLayout",
+                    (ins "ArrayRef<int64_t>":$shape), [{}], [{
+      return toLinearLayoutIgnoringPadding(shape, $_attr);
+    }]>,
+    InterfaceMethod<[{
+      Return the order of the dimensions in storage, fastest changing first. The
+      default derives it from the encoding's allocation layout, so an encoding
+      only overrides it to state an order its layout does not show.
+    }],
+                    "SmallVector<unsigned>", "getDimOrder",
+                    (ins "ArrayRef<int64_t>":$shape), [{}], [{
+      return getOrderFromLayout(
+          ::mlir::triton::gpu::getAllocationLayout(shape, $_attr));
+    }]>,
   ];
 }
 def DeclareSharedEncodingMethods : DeclareAttrInterfaceMethods<
