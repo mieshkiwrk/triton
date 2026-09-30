@@ -4,6 +4,7 @@ No GPU kernel should be declared in this test.
 Python API correctness tests involving GPU kernels should be placed in `test_api.py`.
 Profile correctness tests involving GPU kernels should be placed in `test_profile.py`.
 """
+import ctypes
 import pathlib
 import pytest
 
@@ -89,6 +90,25 @@ def test_instrumented_op_entry_exit():
 def test_set_metric_kernels():
     libproton.set_metric_kernels(0, 0, 0)
     libproton.set_metric_kernels(0, 0, 0, 1, 0, 1, 0)
+
+
+def _kernel_capsule():
+    """Builds a PyCapsule the way a driver hands out a kernel object."""
+    ctypes.pythonapi.PyCapsule_New.restype = ctypes.py_object
+    ctypes.pythonapi.PyCapsule_New.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p]
+    return ctypes.pythonapi.PyCapsule_New(ctypes.c_void_p(0x1000), b"kernel", None)
+
+
+def test_set_metric_kernels_accepts_capsule_handles():
+    # A kernel handle is an integer for the in-tree backends, but a driver whose
+    # kernel is a C++ object hands it to Python as a capsule.
+    libproton.set_metric_kernels(_kernel_capsule(), _kernel_capsule(), 0)
+    libproton.set_metric_kernels(_kernel_capsule(), 0, 0, 1, 0, 1, 0)
+
+
+def test_set_metric_kernels_rejects_other_handle_types():
+    with pytest.raises(TypeError):
+        libproton.set_metric_kernels("not a handle", "not a handle", 0)
 
 
 def test_tensor_metric_construction():

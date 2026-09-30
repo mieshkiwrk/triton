@@ -40,6 +40,20 @@ std::map<std::string, MetricValueType> convertPythonMetrics(
   return converted;
 }
 
+// A kernel handle is whatever the backend's driver hands to Python: an integer
+// for CUDA and HIP (CUfunction / hipFunction_t), or a PyCapsule for a backend
+// whose kernel is a C++ object. Accept both, so proton does not need one
+// binding overload per representation. Either way the handle is borrowed: the
+// kernel it names must outlive the metric launches that use it.
+void *kernelHandleFromObject(const nanobind::object &handle) {
+  if (nanobind::isinstance<nanobind::capsule>(handle))
+    return nanobind::cast<nanobind::capsule>(handle).data();
+  uintptr_t address = 0;
+  if (!nanobind::try_cast<uintptr_t>(handle, address))
+    throw nanobind::type_error("kernel handle must be an integer or a capsule");
+  return reinterpret_cast<void *>(address);
+}
+
 } // namespace
 
 static void initProton(nanobind::module_ &m) {
@@ -183,20 +197,21 @@ static void initProton(nanobind::module_ &m) {
 
   m.def(
       "set_metric_kernels",
-      [](uintptr_t tensorMetricKernel, uintptr_t scalarMetricKernel,
-         uintptr_t stream, unsigned int tensorMetricKernelNumThreads,
+      [](nanobind::object tensorMetricKernel,
+         nanobind::object scalarMetricKernel, uintptr_t stream,
+         unsigned int tensorMetricKernelNumThreads,
          unsigned int tensorMetricKernelSharedMemBytes,
          unsigned int scalarMetricKernelNumThreads,
          unsigned int scalarMetricKernelSharedMemBytes) {
         MetricKernelLaunchState metricKernelLaunchState{
-            MetricKernelLaunchConfig{
-                reinterpret_cast<void *>(tensorMetricKernel),
-                reinterpret_cast<void *>(stream), tensorMetricKernelNumThreads,
-                tensorMetricKernelSharedMemBytes},
-            MetricKernelLaunchConfig{
-                reinterpret_cast<void *>(scalarMetricKernel),
-                reinterpret_cast<void *>(stream), scalarMetricKernelNumThreads,
-                scalarMetricKernelSharedMemBytes}};
+            MetricKernelLaunchConfig{kernelHandleFromObject(tensorMetricKernel),
+                                     reinterpret_cast<void *>(stream),
+                                     tensorMetricKernelNumThreads,
+                                     tensorMetricKernelSharedMemBytes},
+            MetricKernelLaunchConfig{kernelHandleFromObject(scalarMetricKernel),
+                                     reinterpret_cast<void *>(stream),
+                                     scalarMetricKernelNumThreads,
+                                     scalarMetricKernelSharedMemBytes}};
         SessionManager::instance().setMetricKernels(metricKernelLaunchState);
       },
       nanobind::arg("tensorMetricKernel"), nanobind::arg("scalarMetricKernel"),

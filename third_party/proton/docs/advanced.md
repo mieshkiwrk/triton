@@ -133,3 +133,40 @@ Each registration field is optional, so a backend can register only the Proton
 extension points it supports. Backend implementations should follow the existing
 `CuptiProfiler` and `RoctracerProfiler` patterns for callback correlation,
 runtime events, and metric insertion.
+
+### Registering at Runtime
+
+A backend that ships separately from Proton -- as its own package next to a
+released Triton -- is not present when Proton is built, so the CMake helpers
+above cannot register it. It calls `proton::registerBackend()` from its own
+library initialisation instead, with the same `BackendRegistration` the
+compile-time path uses:
+
+```c++
+#include "Backend/Backend.h"
+
+const auto deviceType = proton::allocateExternalDeviceType();
+if (!deviceType)
+  return; // every reserved device type slot is already taken
+proton::registerBackend({
+    proton::ProfilerRegistration{"MyBackend", "TritonBackendForThisProfiler",
+                                 []() -> proton::Profiler * {
+                                   return &MyProfilerImplementation::instance();
+                                 }},
+    proton::DeviceRegistration{"MY_DEVICE", *deviceType,
+                               [](uint64_t index) { return getMyDevice(index); }},
+    proton::RuntimeRegistration{"MY_DEVICE", []() -> proton::Runtime * {
+                                  return &MyRuntimeImplementation::instance();
+                                }},
+});
+```
+
+Registrations are additive and are honoured by every query, so the profiler
+becomes selectable for its Triton backend. Call this during library
+initialisation, before a profiling session is created; registering a profiler
+name that is already taken fails and changes nothing, so loading a backend twice
+is harmless. `proton::allocateExternalDeviceType()` hands out one of the reserved
+`EXTERNAL_*` device type slots, because the `DeviceType` enum is generated when
+Proton is built. The registration is C++: build the backend against the headers
+of the Proton it loads into, with the same compiler and C++ standard library, as
+for any library that subclasses Proton's classes.

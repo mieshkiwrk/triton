@@ -1,6 +1,7 @@
 from typing import Dict, Optional, Union, Any
 
 import triton
+import triton.backends
 from triton._C.libtriton import ir as triton_ir
 from triton._C.libtriton import proton as triton_proton
 from triton._C.libtriton import amd as triton_amd
@@ -99,13 +100,16 @@ def _interpret_mode(mode_obj: Union[str, mode.InstrumentationMode]) -> mode.Inst
 
 
 def _get_backend_name() -> str:
-    backend = triton.runtime.driver.active.get_current_target().backend
-    if backend == "cuda":
-        return "nvidia"
-    elif backend == "hip":
-        return "amd"
-    else:
-        raise RuntimeError(f"Unsupported backend: {backend}")
+    # Instrumentation callbacks are keyed by the name a backend is registered
+    # under in `triton.backends` ("nvidia", "amd", ...); each backend's compiler
+    # passes that name to `triton._instrumentation.instrument`. Ask the
+    # registered backends which one owns the active target instead of mapping
+    # target names here.
+    target = triton.runtime.driver.active.get_current_target()
+    names = [name for name, backend in triton.backends.backends.items() if backend.compiler.supports_target(target)]
+    if len(names) != 1:
+        raise RuntimeError(f"Expected exactly one backend supporting target ({target.backend}), found: {names}")
+    return names[0]
 
 
 class InstrumentationHook(Hook):

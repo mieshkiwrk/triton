@@ -29,7 +29,19 @@ Device getDevice(DeviceType type, uint64_t index) {
 }
 
 const std::string getDeviceTypeString(DeviceType type) {
-  return getDeviceEntry(type).getName();
+  // Callers iterate every slot up to DeviceType::COUNT (see HatchetMsgPack),
+  // which now includes reserved EXTERNAL_* slots that no backend has claimed.
+  // Name those instead of throwing; a genuinely wrong lookup still surfaces
+  // through getDevice().
+  constexpr const char *kUnknownDeviceTypeName = "unknown";
+  const auto devices = getDeviceRegistrations();
+  auto itr = std::find_if(devices.begin(), devices.end(),
+                          [&](const DeviceRegistration &entry) {
+                            return type == entry.getDeviceType();
+                          });
+  if (itr == devices.end())
+    return kUnknownDeviceTypeName;
+  return itr->getName();
 }
 
 } // namespace proton

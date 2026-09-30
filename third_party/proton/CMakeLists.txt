@@ -201,3 +201,10 @@ endif()
 
 # ============ Link any external libs required by Proton backends ============
 link_proton_backend_external_libs()
+
+# ============ Fixture for the runtime-registration test ============
+# Added here rather than under test/ because it links against the Proton library
+# created above, the way a separately shipped backend does.
+if(TRITON_BUILD_UT)
+  add_subdirectory(test/runtime_backend)
+endif()

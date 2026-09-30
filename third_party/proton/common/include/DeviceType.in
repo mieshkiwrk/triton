@@ -7,6 +7,13 @@ enum class DeviceType {
   HIP,
   CUDA,
 @BACKEND_DEVICE_TAGS@
+  // Slots a backend registered at runtime (see proton::registerBackend) can claim
+  // through proton::allocateExternalDeviceType(). They sit before COUNT so that every
+  // array sized by COUNT still covers them.
+  EXTERNAL_0,
+  EXTERNAL_1,
+  EXTERNAL_2,
+  EXTERNAL_3,
   COUNT
 };
 
