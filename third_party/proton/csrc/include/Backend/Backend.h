@@ -11,6 +11,11 @@
 #include <utility>
 #include <vector>
 
+// Proton is built with hidden visibility unless TRITON_EXT_ENABLED is set. The
+// runtime-registration entry points below are called from a separately built
+// library, so they keep default visibility in every build.
+#define PROTON_EXPORT __attribute__((visibility("default")))
+
 namespace proton {
 
 class Profiler;
@@ -125,6 +130,29 @@ private:
 };
 
 const std::vector<BackendRegistration> &getBackendRegistrations();
+
+// Registers a backend at runtime.
+//
+// Compile-time registration (getBackendRegistrations, generated into
+// RegisteredBackends.cpp) needs the backend's sources when Proton is built. A
+// backend shipped as its own shared library next to an already-built Proton
+// cannot provide them, so it calls this from its library initialisation
+// instead. Runtime registrations are visited after the compile-time ones by
+// getProfilerRegistrations, getDeviceRegistrations and getRuntimeRegistrations.
+//
+// Call before the first profiling session is created; like the compile-time
+// registry, this is not synchronised against concurrent queries. Returns false
+// and registers nothing if the profiler name is already taken, so loading a
+// backend twice is harmless.
+PROTON_EXPORT bool registerBackend(BackendRegistration registration);
+
+// Claims a DeviceType value for a backend registered at runtime.
+//
+// DeviceType is generated when Proton is built, so a separately built backend
+// has no value of its own. This hands out one of the reserved EXTERNAL_* slots,
+// or std::nullopt once they are all taken. Call once per device kind and reuse
+// the value; like registerBackend, not synchronised.
+PROTON_EXPORT std::optional<DeviceType> allocateExternalDeviceType();
 const std::vector<ProfilerRegistration> getProfilerRegistrations();
 const std::vector<DeviceRegistration> getDeviceRegistrations();
 const std::vector<RuntimeRegistration> getRuntimeRegistrations();

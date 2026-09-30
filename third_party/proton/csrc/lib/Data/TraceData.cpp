@@ -364,6 +364,20 @@ void TraceData::dumpChromeTrace(std::ostream &os, size_t phase) const {
             std::get<uint64_t>(kernelMetric->getValue(KernelMetric::EndTime)),
             timestampOffsetNs);
         auto launchEventId = events.at(eventId).parentEventId;
+        // The launch is the nearest ancestor that has a CPU time range, which
+        // is not always the immediate parent: a profiler whose backend cannot
+        // name a kernel when the launch is observed records the kernel under an
+        // intermediate event that carries no CPU timestamps.
+        while (launchEventId != Trace::Event::DummyId) {
+          auto launchIt = events.find(launchEventId);
+          if (launchIt == events.end()) {
+            launchEventId = Trace::Event::DummyId;
+            break;
+          }
+          if (launchIt->second.hasCpuTimeRange())
+            break;
+          launchEventId = launchIt->second.parentEventId;
+        }
         kernelEvents[streamId].emplace_back(kernelMetric, flexibleMetrics,
                                             contexts, startTimeNs, endTimeNs,
                                             launchEventId, isGraphLinked);
