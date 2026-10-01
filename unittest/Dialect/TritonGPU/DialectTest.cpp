@@ -363,6 +363,139 @@ TEST_F(ShapePerCTATest, ShapePerCTA) {
   EXPECT_EQ(shapePerCTA, expectedShapePerCTA);
 }
 
+// Test-only stand-in for a backend shared encoding that describes only the
+// storage its tiles occupy, because element placement inside a tile is a
+// property of the hardware that accesses the buffer. The storage is twice the
+// element count here, as it is for tiles the hardware keeps apart.
+LinearLayout testFootprintOnlyLayout(MLIRContext *ctx,
+                                     ArrayRef<int64_t> shape) {
+  auto kOffset = StringAttr::get(ctx, "offset");
+  auto dims = standardOutDimNames(ctx, shape.size());
+  std::vector<std::vector<int32_t>> bases;
+  for (int bit = 0; bit < llvm::Log2_64(shape[1]); ++bit)
+    bases.push_back({0, 1 << bit});
+  for (int bit = 0; bit < llvm::Log2_64(shape[0]); ++bit)
+    bases.push_back({1 << bit, 0});
+  // A basis that maps nowhere: the storage a tile covers is larger than the
+  // elements it holds.
+  bases.push_back({0, 0});
+  return LinearLayout({{kOffset, bases}},
+                      {{dims[0], shape[0]}, {dims[1], shape[1]}},
+                      /*requireSurjective=*/true);
+}
+
+struct TestFootprintOnlyCGAModel
+    : public LayoutEncodingTrait::ExternalModel<TestFootprintOnlyCGAModel,
+                                                StringAttr> {
+  CGAEncodingAttr getCGALayout(Attribute attr) const {
+    return CGAEncodingAttr::get1CTALayout(attr.getContext(), /*rank=*/2);
+  }
+  // The default implementation calls getCGALayout on the attribute itself,
+  // which an external model cannot do, so spell the rank out here.
+  unsigned getRank(Attribute attr) const { return 2; }
+};
+
+struct TestFootprintOnlySharedModel
+    : public SharedEncodingTrait::ExternalModel<TestFootprintOnlySharedModel,
+                                                StringAttr> {
+  bool hasElementPlacement(Attribute attr) const { return false; }
+  // Placement inside a tile belongs to the hardware that accesses the buffer,
+  // so asking for it fails here, the way it does for a padded encoding, rather
+  // than returning addresses the hardware does not use.
+  LinearLayout toLinearLayout(Attribute attr, ArrayRef<int64_t> shape) const {
+    llvm::report_fatal_error(
+        "test footprint-only encoding does not describe element placement");
+  }
+  LinearLayout getAllocationLayout(Attribute attr,
+                                   ArrayRef<int64_t> shape) const {
+    return testFootprintOnlyLayout(attr.getContext(), shape);
+  }
+};
+
+class FootprintOnlySharedEncodingTest : public ::testing::Test {
+public:
+  FootprintOnlySharedEncodingTest() {
+    ctx.getOrLoadDialect<TritonGPUDialect>();
+    StringAttr::attachInterface<TestFootprintOnlyCGAModel>(ctx);
+    StringAttr::attachInterface<TestFootprintOnlySharedModel>(ctx);
+  }
+
+protected:
+  MLIRContext ctx;
+  Attribute encoding() {
+    return StringAttr::get(&ctx, "test_footprint_only_shared");
+  }
+};
+
+TEST_F(FootprintOnlySharedEncodingTest, AllocationFollowsTheFootprint) {
+  ASSERT_TRUE(isa<SharedEncodingTrait>(encoding()));
+  EXPECT_FALSE(cast<SharedEncodingTrait>(encoding()).hasElementPlacement());
+
+  // The allocation is sized from the encoding's allocation layout, so a
+  // footprint that is larger than the element count is honoured, without the
+  // encoding describing where an element sits.
+  SmallVector<int64_t> shape = {32, 64};
+  EXPECT_EQ(getAllocationElems(encoding(), shape), 2 * 32 * 64);
+}
+
+TEST_F(FootprintOnlySharedEncodingTest, ReshapeInferenceReportsIt) {
+  // Reshaping across the tiling of an encoding needs to know where an element
+  // sits, so the inference reports a diagnostic instead of guessing.
+  auto memdesc = MemDescType::get({32, 64}, Float16Type::get(&ctx), encoding(),
+                                  SharedMemorySpaceAttr::get(&ctx));
+  MemDescType inferred;
+  std::string diag;
+  ScopedDiagnosticHandler handler(&ctx, [&](Diagnostic &d) {
+    diag = d.str();
+    return success();
+  });
+  EXPECT_TRUE(failed(MemDescReshapeOp::inferReturnTypes(
+      &ctx, UnknownLoc::get(&ctx), memdesc, {2048}, inferred)));
+  EXPECT_THAT(diag, testing::HasSubstr("does not describe element placement"));
+}
+
+TEST_F(FootprintOnlySharedEncodingTest, DimensionOrderComesFromTheFootprint) {
+  // The order of the dimensions in storage follows from the allocation layout,
+  // so core can order a buffer it cannot address element by element.
+  SmallVector<int64_t> shape = {32, 64};
+  EXPECT_EQ(getOrder(cast<SharedEncodingTrait>(encoding()), shape),
+            SmallVector<unsigned>({1, 0}));
+}
+
+TEST_F(FootprintOnlySharedEncodingTest, EquivalenceIsAttributeEquality) {
+  // Two footprint-only encodings can cover the same storage while placing
+  // elements differently, so they are compared as attributes rather than
+  // through a placement map neither of them has.
+  auto lhs = cast<LayoutEncodingTrait>(encoding());
+  auto rhs = cast<LayoutEncodingTrait>(
+      Attribute(StringAttr::get(&ctx, "another_footprint_only_shared")));
+  SmallVector<int64_t> shape = {32, 64};
+  EXPECT_TRUE(areLayoutsEquivalent(shape, lhs, lhs));
+  EXPECT_FALSE(areLayoutsEquivalent(shape, lhs, rhs));
+}
+
+TEST_F(FootprintOnlySharedEncodingTest, TransposeInferenceFailsCleanly) {
+  // Rewriting the layout needs element placement, so inference gives up with a
+  // diagnostic instead of asking for a map the encoding does not have.
+  auto *inferLayout =
+      ctx.getOrLoadDialect<TritonGPUDialect>()
+          ->getRegisteredInterface<DialectInferLayoutInterface>();
+  Attribute transposed;
+  SmallVector<int64_t> shape = {32, 64};
+  SmallVector<int32_t> order = {1, 0};
+  EXPECT_TRUE(failed(inferLayout->inferTransOpEncoding(
+      encoding(), shape, order, transposed, /*loc=*/{})));
+}
+
+TEST_F(FootprintOnlySharedEncodingTest, PartitionedLayoutRejectsIt) {
+  auto emitError = [&]() {
+    return mlir::emitError(mlir::UnknownLoc::get(&ctx));
+  };
+  EXPECT_TRUE(failed(PartitionedSharedEncodingAttr::verify(
+      emitError, /*numPartitions=*/2, /*numGroups=*/1, /*partitionDim=*/0,
+      cast<SharedEncodingTrait>(encoding()))));
+}
+
 class JoinOpTest : public ::testing::Test {
 public:
   JoinOpTest() { ctx.getOrLoadDialect<TritonGPUDialect>(); }
@@ -439,6 +572,26 @@ TEST_F(JoinOpTest, JoinOpLayoutPropagation) {
                 toLinearLayout(newShape, dstEnc));
     }
   }
+}
+
+// Two padded encodings can share a linear component and still occupy storage
+// differently, so equivalence has to keep them apart.
+TEST(PaddedSharedEncodingEquivalence, PaddingIsPartOfTheLayout) {
+  MLIRContext ctx;
+  ctx.getOrLoadDialect<TritonGPUDialect>();
+  auto cga = CGAEncodingAttr::get1CTALayout(&ctx, /*rank=*/2);
+  SmallVector<int64_t> shape = {64, 64};
+  SmallVector<unsigned> order = {1, 0};
+  auto padded = [&](unsigned interval, unsigned padding) {
+    SmallVector<std::pair<unsigned, unsigned>> intervalPads = {
+        {interval, padding}};
+    return cast<LayoutEncodingTrait>(Attribute(
+        PaddedSharedEncodingAttr::get(&ctx, intervalPads, order, shape, cga)));
+  };
+  auto a = padded(32, 8);
+  auto b = padded(32, 16);
+  EXPECT_TRUE(areLayoutsEquivalent(shape, a, a));
+  EXPECT_FALSE(areLayoutsEquivalent(shape, a, b));
 }
 
 class LinearEncodingTest : public ::testing::Test {

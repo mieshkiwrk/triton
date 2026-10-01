@@ -3622,6 +3622,33 @@ struct TestExtSharedModel
   }
 };
 
+TEST_F(LinearLayoutConversionsTest, SharedEncodingDimensionOrder) {
+  // The order every shared encoding reports for its dimensions, fastest
+  // changing first. It is read off the encoding's allocation layout, so this
+  // pins what each layout says about which dimension is contiguous in storage.
+  EXPECT_EQ(getOrder(shared(1, 1, 1, {1, 1}, {1, 1}, {1, 0}, {1, 0}), {32, 64}),
+            SmallVector<unsigned>({1, 0}));
+  EXPECT_EQ(getOrder(shared(1, 1, 1, {1, 1}, {1, 1}, {0, 1}, {1, 0}), {32, 64}),
+            SmallVector<unsigned>({0, 1}));
+  EXPECT_EQ(getOrder(shared(8, 1, 8, {1, 1}, {1, 1}, {1, 0}, {1, 0}), {64, 64}),
+            SmallVector<unsigned>({1, 0}));
+  EXPECT_EQ(getOrder(nvmmaShared(64, /*transposed=*/false, 16, {1, 1}, {1, 1},
+                                 {1, 0}, {1, 0}),
+                     {64, 64}),
+            SmallVector<unsigned>({1, 0}));
+  EXPECT_EQ(getOrder(nvmmaShared(64, /*transposed=*/true, 16, {1, 1}, {1, 1},
+                                 {1, 0}, {1, 0}),
+                     {64, 64}),
+            SmallVector<unsigned>({0, 1}));
+  EXPECT_EQ(getOrder(nvmmaShared(64, /*transposed=*/false, 16, {1, 1, 1},
+                                 {1, 1, 1}, {2, 1, 0}, {2, 1, 0}),
+                     {2, 64, 64}),
+            SmallVector<unsigned>({2, 1, 0}));
+  EXPECT_EQ(getOrder(AMDRotatingShared(1, 1, 1, {1, 1}, {1, 1}, {0, 1}, {1, 0}),
+                     {32, 64}),
+            SmallVector<unsigned>({0, 1}));
+}
+
 TEST_F(LinearLayoutConversionsTest, OutOfTreeSharedEncodingExtensionPoint) {
   StringAttr::attachInterface<TestExtSharedModel>(ctx);
   Attribute layout = S("test_out_of_tree_shared");
