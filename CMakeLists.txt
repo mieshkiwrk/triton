@@ -508,6 +508,18 @@ if(TRITON_BUILD_PYTHON_MODULE)
     DESTINATION "${_TRITON_WHEEL_INCLUDE}/python"
     FILES_MATCHING PATTERN "*.h"
     PATTERN "triton" EXCLUDE)
+  # Proton's headers, for profiler backends built against the wheel and
+  # registered at runtime. DeviceType.h is generated when Proton is configured.
+  if(TRITON_BUILD_PROTON)
+    install(DIRECTORY ${PROJECT_SOURCE_DIR}/third_party/proton/csrc/include/
+      COMPONENT wheel_headers
+      DESTINATION "${_TRITON_WHEEL_INCLUDE}/third_party/proton/csrc/include"
+      FILES_MATCHING PATTERN "*.h")
+    install(DIRECTORY ${PROJECT_SOURCE_DIR}/third_party/proton/common/include/
+      COMPONENT wheel_headers
+      DESTINATION "${_TRITON_WHEEL_INCLUDE}/third_party/proton/common/include"
+      FILES_MATCHING PATTERN "*.h")
+  endif()
 
   # Build plugins when building libtriton since they depend on libtriton.
   if(TRITON_EXT_ENABLED)
