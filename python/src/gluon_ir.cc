@@ -326,6 +326,13 @@ py::object layoutToGluon(Attribute layout, bool isRubin = false) {
         tmem.getTwoCTAs(), tmem.getFp4Padded());
   }
 
+  // Encodings defined outside core, e.g. by an out-of-tree backend, go to the
+  // converters registered with register_layout_converter.
+  py::object gluonLayout =
+      py::module_::import_("triton.experimental.gluon.language._layouts")
+          .attr("_convert_unknown_layout")(layout);
+  if (!gluonLayout.is_none())
+    return gluonLayout;
   throw py::value_error("Unhandled encoding encountered");
 }
 

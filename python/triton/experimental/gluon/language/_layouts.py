@@ -703,3 +703,25 @@ def warps_per_cta(layout, shape):
         return warps_per_cta(layout.parent, shape)
     else:
         return layout.warps_per_cta
+
+
+_layout_converters = []
+
+
+def register_layout_converter(converter):
+    """
+    Register a converter for encodings that have no Gluon layout in core, e.g.
+    those of an out-of-tree backend. When such an encoding is read back,
+    ``converter(attr)`` gets it as an ``ir.attribute`` and returns its Gluon
+    layout, or None to leave it to the next converter.
+    """
+    _layout_converters.append(converter)
+    return converter
+
+
+def _convert_unknown_layout(attr):
+    for converter in _layout_converters:
+        layout = converter(attr)
+        if layout is not None:
+            return layout
+    return None
