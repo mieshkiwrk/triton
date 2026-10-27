@@ -150,4 +150,7 @@ __attribute__((constructor)) static void registerMyBackend() {
 ```
 
 The library resolves `registerBackend` from `libproton`, so Triton has to be
-built with `TRITON_EXT_ENABLED`, as the official wheels are.
+built with `TRITON_EXT_ENABLED`, as the official wheels are. Such a build also
+ships Proton's headers, so the backend can be compiled against the installed
+package with `triton/include/third_party/proton/csrc/include` and
+`triton/include/third_party/proton/common/include` as include directories.
