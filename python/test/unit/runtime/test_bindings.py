@@ -88,6 +88,7 @@ def test_binding_classes_released_at_shutdown():
         import os
         from triton._C.libtriton import gluon_ir, ir
         from triton.experimental.gluon.language import BlockedLayout
+        from triton.experimental.gluon.language._layouts import register_layout_converter
 
         class ShutdownSentinel:
             def __init__(self, message):
@@ -97,6 +98,8 @@ def test_binding_classes_released_at_shutdown():
                 write(1, self.message)
 
         ir.builder._shutdown_sentinel = ShutdownSentinel(b"builder released\\n")
+        # A registered layout converter must not keep the bindings alive.
+        register_layout_converter(lambda attr, builder_type=ir.builder: None)
         context = ir.context()
         ir.load_dialects(context)
         builder = gluon_ir.GluonOpBuilder(context)
