@@ -1,4 +1,6 @@
 from typing import Dict, Optional, Union, Any
+import functools
+from importlib.metadata import entry_points
 
 import triton
 from triton._C.libtriton import ir as triton_ir
@@ -38,8 +40,9 @@ class CudaAllocator:
 
         # Create the buffer
         import torch
+        device = triton.runtime.driver.active.get_active_torch_device()
         with metadata_state():
-            buffer = torch.zeros((aligned_size, ), dtype=torch.uint8, device="cuda")
+            buffer = torch.zeros((aligned_size, ), dtype=torch.uint8, device=device)
         self.instrumentation_hook.buffer = buffer
         return buffer
 
@@ -98,12 +101,22 @@ def _interpret_mode(mode_obj: Union[str, mode.InstrumentationMode]) -> mode.Inst
         raise ValueError(f"Unknown mode: {mode_obj}")
 
 
+@functools.cache
+def _get_external_backend(backend: str) -> Any:
+    """A target backend other than cuda and hip provides `name`, `lower_to_llvm(pm, device)`, `load_dialects(context)`
+    and optionally `trace_device_type` through the entry point named after it in `triton.profiler.instrumentation`."""
+    entry_point = {ep.name: ep for ep in entry_points(group="triton.profiler.instrumentation")}.get(backend)
+    return None if entry_point is None else entry_point.load()
+
+
 def _get_backend_name() -> str:
     backend = triton.runtime.driver.active.get_current_target().backend
     if backend == "cuda":
         return "nvidia"
     elif backend == "hip":
         return "amd"
+    elif (external_backend := _get_external_backend(backend)) is not None:
+        return external_backend.name
     else:
         raise RuntimeError(f"Unsupported backend: {backend}")
 
@@ -133,6 +146,7 @@ class InstrumentationHook(Hook):
 
         device = triton.runtime.driver.active.get_current_device()
         max_shared_mem = triton.runtime.driver.active.utils.get_device_properties(device)["max_shared_mem"]
+        target_backend = triton.runtime.driver.active.get_current_target().backend
         backend_name = _get_backend_name()
 
         def to_llvmir_passes(pm):
@@ -159,6 +173,8 @@ class InstrumentationHook(Hook):
             elif backend_name == "amd":
                 arch = triton.runtime.driver.active.utils.get_device_properties(device)["arch"].split(":")[0]
                 triton_proton.add_convert_proton_amd_gpu_to_llvm(pm, arch)
+            else:
+                _get_external_backend(target_backend).lower_to_llvm(pm, device)
 
         register_instrumentation(point="load-dialects", backend=backend_name, callback=triton_proton.load_dialects)
         register_instrumentation(point="ttgpuir-to-llvmir", backend=backend_name, callback=to_llvmir_passes)
@@ -219,6 +235,8 @@ class InstrumentationHook(Hook):
                 triton_nvidia.load_dialects(context)
             elif backend_name == "amd":
                 triton_amd.load_dialects(context)
+            else:
+                _get_external_backend(triton.runtime.driver.active.get_current_target().backend).load_dialects(context)
             triton_proton.load_dialects(context)
             module = triton_ir.parse_mlir_module(ir_path, context)
             module.context = context
@@ -267,7 +285,7 @@ class InstrumentationHook(Hook):
                     return 1
                 elif target["backend"] == "hip":
                     return 2
-                return 0
+                return getattr(_get_external_backend(target["backend"]), "trace_device_type", 0)
 
             alloc_size = 0 if self.buffer is None else self.buffer.element_size() * self.buffer.numel()
             sampled_warps = self.mode.sampling_options.strip().split(",")
